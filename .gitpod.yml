@@ -1,0 +1,20 @@
+image: img.plattform.dataplattform.sparebank1.no/dp-full:v1
+
+tasks:
+  - name: Setup Environment
+    command: |
+      # Install pre-commit hooks and run them
+      pre-commit install && pre-commit run
+
+      # Install Python dependencies
+      poetry self update
+      poetry install
+      exit
+
+
+vscode:
+  extensions:
+    - ms-python.python # Python
+    - ms-python.vscode-pylance # Pylance
+    - ms-toolsai.jupyter # Jupyter support
+    - tamasfe.even-better-toml # Even Better TOML

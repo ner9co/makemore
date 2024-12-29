@@ -20,47 +20,13 @@ itos = {i: s for s, i in stoi.items()}
 vocab_size = len(itos)
 
 
-# --------------------------------------------
-# Bigram model
-# --------------------------------------------
-# Create table of counts
-N = torch.zeros((27, 27), dtype=torch.int32)
-
-for w in words:
-    chs = ["."] + list(w) + ["."]
-    for ch1, ch2 in zip(chs, chs[1:]):
-        ix1 = stoi[ch1]
-        ix2 = stoi[ch2]
-        N[ix1, ix2] += 1
-
-# Normalize the rows in count table N
-P = N.float()
-P /= P.sum(1, keepdim=True)
-
-
-g = torch.Generator().manual_seed(2147483647)
-# Inference
-for i in range(5):
-    out = []
-    ix = 0
-    while True:
-        p = P[ix]
-        ix = torch.multinomial(p, num_samples=1, replacement=True, generator=g).item()
-        out.append(itos[ix])
-        if ix == 0:
-            break
-    print("".join(out))
-
 
 # ----------------------------------------------
 # Neural network approach
 # ----------------------------------------------
 ## Building the data set
 
-block_size = (
-    3  # context length: how many characters do we take to predict the next one?
-)
-
+block_size = 3  # context length: how many characters to predict the next one?
 
 def build_dataset(words):
     X, Y = [], []
@@ -89,121 +55,88 @@ Xdev, Ydev = build_dataset(words[n1:n2])
 Xte, Yte = build_dataset(words[n2:])
 
 
-# MLP revisited
+def cmp(s, dt, t):
+    ex = torch.all(dt == t.grad).item()
+    app = torch.allclose(dt, t.grad)
+    maxdiff = (dt - t.grad).abs().max().item()
+    print(f'{s:15s} | exact: {str(ex):5s} | approximate: {str(app):5s} | maxdiff: {maxdiff}')
+
+
+
 n_embed = 10  # the dimensionality of the character embedding vectors
-n_hidden = 200  # the number of neurons in the hidden layer of the MLP
+n_hidden = 64  # the number of neurons in the hidden layer of the MLP
 
 g = torch.Generator().manual_seed(2147483647)
 C = torch.randn((vocab_size, n_embed), generator=g)
+# Layer 1
 W1 = (
     torch.randn((n_embed * block_size, n_hidden), generator=g)
     * (5 / 3)
     / ((n_embed * block_size) ** 0.5)
 )
-# b1 = torch.randn(n_hidden, generator=g) * 0.01
-W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
-b2 = torch.randn(vocab_size, generator=g) * 0
-
+b1 = torch.randn(n_hidden, generator=g) * 0.1
+# layer 2
+W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.1
+b2 = torch.randn(vocab_size, generator=g) * 0.1
 # BatchNorm parameters
-bngain = torch.ones((1, n_hidden))
-bnbias = torch.zeros((1, n_hidden))
-bnmean_running = torch.zeros((1, n_hidden))
-bnstd_running = torch.ones((1, n_hidden))
+bngain = torch.ones((1, n_hidden)) * 0.1 + 1.0
+bnbias = torch.zeros((1, n_hidden)) *0.1
 
-
-parameters = [C, W1, W2, b2, bngain, bnbias]
+parameters = [C, W1, b1, W2, b2, bngain, bnbias]
+print(sum(p.nelement() for p in parameters))
 for p in parameters:
     p.requires_grad = True
 
 
-# Optimization
-max_steps = 200000
 batch_size = 32
-lossi = []
-
-for i in range(max_steps):
-    # minibatch construct
-    ix = torch.randint(0, Xtr.shape[0], (batch_size,))
-    Xb, Yb = Xtr[ix], Ytr[ix]  # batch X,Y
-
-    # forward pass
-    emb = C[Xb]  # embed the characters into vectors
-    embcat = emb.view(emb.shape[0], -1)  # concatenate the vectors
-    # Linear layer
-    hpreact = embcat @ W1  # + b1 # hidden layer pre activation
-    # BatchNorm layer
-    # --------------------------------------------------------
-    bnmeani = hpreact.mean(0, keepdim=True)
-    bnstdi = hpreact.std(0, keepdim=True)
-    hpreact = bngain * (hpreact - bnmeani) / bnstdi + bnbias
-    with torch.no_grad():
-        bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
-        bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
-    # ---------------------------------------------------------
-    # Non-linearity
-    h = torch.tanh(hpreact)  # hidden layer
-    logits = h @ W2 + b2  # output layer
-    loss = F.cross_entropy(logits, Yb)  # loss function
-
-    # backward pass
-    for p in parameters:
-        p.grad = None
-    loss.backward()
-
-    # update
-    lr = 0.1 if i < 100000 else 0.01
-    for p in parameters:
-        p.data += -lr * p.grad
-
-    if i % 10000 == 0:  # print every once in a while
-        print(f"{i:7d}/{max_steps:7d}: {loss.item():.4f}")
-    lossi.append(loss.log10().item())
-
-    break
+n = batch_size
+ix = torch.randint(0, Xtr.shape[0], (batch_size,))
+Xb, Yb = Xtr[ix], Ytr[ix]  # batch X,Y
 
 
-@torch.no_grad()
-def split_loss(split):
-    x, y = {
-        "train": (Xtr, Ytr),
-        "val": (Xdev, Ydev),
-        "test": (Xte, Yte),
-    }[split]
-    emb = C[x]
-    embcat = emb.view(emb.shape[0], -1)
-    hpreact = embcat @ W1  # + b1  # hidden layer pre activation
-    hpreact = bngain * (hpreact - bnmean_running) / bnstd_running + bnbias
-    h = torch.tanh(embcat @ W1)  # + b1)
-    logits = h @ W2 + b2
-    loss = F.cross_entropy(logits, y)
-    print(split, loss.item())
+emb = C[Xb]  # embed the characters into vectors
+embcat = emb.view(emb.shape[0], -1)  # concatenate the vectors
+# Linear layer 1
+hprebn = embcat @ W1 + b1 # hidden layer pre-activation
+# BatchNorm Layer
+bnmeani = 1/n*hprebn.sum(0, keepdim=True)
+bndiff = hprebn - bnmeani
+bndiff2 = bndiff**2
+bnvar = 1/(n-1)*(bndiff2).sum(0, keepdim=True)
+bnvar_inv = (bnvar + 1e-5)**-0.5
+bnraw = bndiff * bnvar_inv
+hpreact = bngain * bnraw + bnbias
+# Non-linearity
+h = torch.tanh(hpreact) # hidden layer
+#Linear layer 2
+logits = h @ W2 + b2 # output layer
+# Cross entropy loss
+logit_maxes = logits.max(1, keepdim=True).values
+norm_logits = logits - logit_maxes
+counts = norm_logits.exp()
+counts_sum = counts.sum(1, keepdim=True)
+counts_sum_inv = counts_sum**-1
+probs = counts * counts_sum_inv
+logprobs = probs.log()
+loss = -logprobs[range(n), Yb].mean()
 
 
-split_loss("train")
-split_loss("val")
+# PyTorch backward pass
+for p in parameters:
+    p.grad = None
+for t in [
+    logprobs, probs, counts, counts_sum, counts_sum_inv,
+    norm_logits, logit_maxes, logits, h, hpreact, bnraw,
+    bnvar_inv, bnvar, bndiff2, bndiff, hprebn, bnmeani,
+    embcat, emb]:
+    t.retain_grad()
+loss.backward()
+loss
 
 
-# Inference
-for _ in range(20):
-    out = []
-    context = [0] * block_size
-    while True:
-        emb = C[torch.tensor([context])]
-        h = torch.tanh(emb.view(1, -1) @ W1)  # + b1)
-        logits = h @ W2 + b2
-        probs = F.softmax(logits, dim=1)
-        ix = torch.multinomial(probs, num_samples=1, generator=g).item()
-        context = context[1:] + [ix]
-        out.append(ix)
-        if ix == 0:
-            break
-
-    print("".join(itos[i] for i in out))
 
 
 # Summary and PyTorchifying the code
-
-
 class Linear:
     def __init__(self, fan_in, fan_out, bias=True):
         self.weight = torch.randn((fan_in, fan_out), generator=g) / fan_in**0.5
@@ -415,3 +348,132 @@ for i, p in enumerate(parameters):
         legends.append("param %d" % i)
 plt.plot([0, len(ud)], [-3, -3], "k")  # these ratios should be ~1e-3, indicate on plot
 plt.legend(legends)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# MLP revisited
+n_embed = 10  # the dimensionality of the character embedding vectors
+n_hidden = 200  # the number of neurons in the hidden layer of the MLP
+
+g = torch.Generator().manual_seed(2147483647)
+C = torch.randn((vocab_size, n_embed), generator=g)
+W1 = (
+    torch.randn((n_embed * block_size, n_hidden), generator=g)
+    * (5 / 3)
+    / ((n_embed * block_size) ** 0.5)
+)
+# b1 = torch.randn(n_hidden, generator=g) * 0.01
+W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
+b2 = torch.randn(vocab_size, generator=g) * 0
+
+# BatchNorm parameters
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running = torch.ones((1, n_hidden))
+
+
+parameters = [C, W1, W2, b2, bngain, bnbias]
+for p in parameters:
+    p.requires_grad = True
+
+
+# Optimization
+max_steps = 200000
+batch_size = 32
+lossi = []
+
+for i in range(max_steps):
+    # minibatch construct
+    ix = torch.randint(0, Xtr.shape[0], (batch_size,))
+    Xb, Yb = Xtr[ix], Ytr[ix]  # batch X,Y
+
+    # forward pass
+    emb = C[Xb]  # embed the characters into vectors
+    embcat = emb.view(emb.shape[0], -1)  # concatenate the vectors
+    # Linear layer
+    hpreact = embcat @ W1  # + b1 # hidden layer pre activation
+    # BatchNorm layer
+    # --------------------------------------------------------
+    bnmeani = hpreact.mean(0, keepdim=True)
+    bnstdi = hpreact.std(0, keepdim=True)
+    hpreact = bngain * (hpreact - bnmeani) / bnstdi + bnbias
+    with torch.no_grad():
+        bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
+        bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
+    # ---------------------------------------------------------
+    # Non-linearity
+    h = torch.tanh(hpreact)  # hidden layer
+    logits = h @ W2 + b2  # output layer
+    loss = F.cross_entropy(logits, Yb)  # loss function
+
+    # backward pass
+    for p in parameters:
+        p.grad = None
+    loss.backward()
+
+    # update
+    lr = 0.1 if i < 100000 else 0.01
+    for p in parameters:
+        p.data += -lr * p.grad
+
+    if i % 10000 == 0:  # print every once in a while
+        print(f"{i:7d}/{max_steps:7d}: {loss.item():.4f}")
+    lossi.append(loss.log10().item())
+
+    break
+
+
+@torch.no_grad()
+def split_loss(split):
+    x, y = {
+        "train": (Xtr, Ytr),
+        "val": (Xdev, Ydev),
+        "test": (Xte, Yte),
+    }[split]
+    emb = C[x]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1  # + b1  # hidden layer pre activation
+    hpreact = bngain * (hpreact - bnmean_running) / bnstd_running + bnbias
+    h = torch.tanh(embcat @ W1)  # + b1)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, y)
+    print(split, loss.item())
+
+
+split_loss("train")
+split_loss("val")
+
+
+# Inference
+for _ in range(20):
+    out = []
+    context = [0] * block_size
+    while True:
+        emb = C[torch.tensor([context])]
+        h = torch.tanh(emb.view(1, -1) @ W1)  # + b1)
+        logits = h @ W2 + b2
+        probs = F.softmax(logits, dim=1)
+        ix = torch.multinomial(probs, num_samples=1, generator=g).item()
+        context = context[1:] + [ix]
+        out.append(ix)
+        if ix == 0:
+            break
+
+    print("".join(itos[i] for i in out))
+

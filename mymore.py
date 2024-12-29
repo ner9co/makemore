@@ -20,13 +20,13 @@ itos = {i: s for s, i in stoi.items()}
 vocab_size = len(itos)
 
 
-
 # ----------------------------------------------
 # Neural network approach
 # ----------------------------------------------
 ## Building the data set
 
 block_size = 3  # context length: how many characters to predict the next one?
+
 
 def build_dataset(words):
     X, Y = [], []
@@ -59,8 +59,9 @@ def cmp(s, dt, t):
     ex = torch.all(dt == t.grad).item()
     app = torch.allclose(dt, t.grad)
     maxdiff = (dt - t.grad).abs().max().item()
-    print(f'{s:15s} | exact: {str(ex):5s} | approximate: {str(app):5s} | maxdiff: {maxdiff}')
-
+    print(
+        f"{s:15s} | exact: {str(ex):5s} | approximate: {str(app):5s} | maxdiff: {maxdiff}"
+    )
 
 
 n_embed = 10  # the dimensionality of the character embedding vectors
@@ -80,7 +81,7 @@ W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.1
 b2 = torch.randn(vocab_size, generator=g) * 0.1
 # BatchNorm parameters
 bngain = torch.ones((1, n_hidden)) * 0.1 + 1.0
-bnbias = torch.zeros((1, n_hidden)) *0.1
+bnbias = torch.zeros((1, n_hidden)) * 0.1
 
 parameters = [C, W1, b1, W2, b2, bngain, bnbias]
 print(sum(p.nelement() for p in parameters))
@@ -97,19 +98,19 @@ Xb, Yb = Xtr[ix], Ytr[ix]  # batch X,Y
 emb = C[Xb]  # embed the characters into vectors
 embcat = emb.view(emb.shape[0], -1)  # concatenate the vectors
 # Linear layer 1
-hprebn = embcat @ W1 + b1 # hidden layer pre-activation
+hprebn = embcat @ W1 + b1  # hidden layer pre-activation
 # BatchNorm Layer
-bnmeani = 1/n*hprebn.sum(0, keepdim=True)
+bnmeani = 1 / n * hprebn.sum(0, keepdim=True)
 bndiff = hprebn - bnmeani
 bndiff2 = bndiff**2
-bnvar = 1/(n-1)*(bndiff2).sum(0, keepdim=True)
-bnvar_inv = (bnvar + 1e-5)**-0.5
+bnvar = 1 / (n - 1) * (bndiff2).sum(0, keepdim=True)
+bnvar_inv = (bnvar + 1e-5) ** -0.5
 bnraw = bndiff * bnvar_inv
 hpreact = bngain * bnraw + bnbias
 # Non-linearity
-h = torch.tanh(hpreact) # hidden layer
-#Linear layer 2
-logits = h @ W2 + b2 # output layer
+h = torch.tanh(hpreact)  # hidden layer
+# Linear layer 2
+logits = h @ W2 + b2  # output layer
 # Cross entropy loss
 logit_maxes = logits.max(1, keepdim=True).values
 norm_logits = logits - logit_maxes
@@ -125,15 +126,29 @@ loss = -logprobs[range(n), Yb].mean()
 for p in parameters:
     p.grad = None
 for t in [
-    logprobs, probs, counts, counts_sum, counts_sum_inv,
-    norm_logits, logit_maxes, logits, h, hpreact, bnraw,
-    bnvar_inv, bnvar, bndiff2, bndiff, hprebn, bnmeani,
-    embcat, emb]:
+    logprobs,
+    probs,
+    counts,
+    counts_sum,
+    counts_sum_inv,
+    norm_logits,
+    logit_maxes,
+    logits,
+    h,
+    hpreact,
+    bnraw,
+    bnvar_inv,
+    bnvar,
+    bndiff2,
+    bndiff,
+    hprebn,
+    bnmeani,
+    embcat,
+    emb,
+]:
     t.retain_grad()
 loss.backward()
 loss
-
-
 
 
 # Summary and PyTorchifying the code
@@ -350,22 +365,6 @@ plt.plot([0, len(ud)], [-3, -3], "k")  # these ratios should be ~1e-3, indicate 
 plt.legend(legends)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # MLP revisited
 n_embed = 10  # the dimensionality of the character embedding vectors
 n_hidden = 200  # the number of neurons in the hidden layer of the MLP
@@ -476,4 +475,3 @@ for _ in range(20):
             break
 
     print("".join(itos[i] for i in out))
-
